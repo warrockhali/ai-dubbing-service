@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { transcribeAudio, synthesizeSpeech, type SupportedLanguageCode } from "@/lib/elevenlabs";
+import { extractAudioToMp3 } from "@/lib/ffmpeg";
 
 export async function POST(req: NextRequest) {
   // 1. 인증 검증 (미들웨어 이중 확인)
@@ -26,10 +27,13 @@ export async function POST(req: NextRequest) {
 
     console.log(`[Pipeline Start] 파일: ${file.name} (${(file.size / 1024).toFixed(1)}KB), 타겟 언어: ${targetLang}`);
 
+    // [전처리] 미디어 파일을 ffmpeg으로 MP3 규격(16kHz/Mono) 강제 변환
+    console.log("[Pre-processing] 미디어 파일 MP3 추출 변환 시작...");
+    const processedFile = await extractAudioToMp3(file);
+
     // Step 1. 음성 추출 및 전사 (STT) - ElevenLabs Scribe v1
-    // File 객체를 직접 전달하여 Buffer 변환 없이 원본 데이터를 유지합니다.
     console.log("[Step 1] STT 전사 시작...");
-    const { text: transcript, languageCode } = await transcribeAudio(file);
+    const { text: transcript, languageCode } = await transcribeAudio(processedFile);
     console.log(`[Step 1] 전사 완료. 감지된 언어: ${languageCode}, 글자수: ${transcript.length}`);
 
     // Step 2. 텍스트 번역 (Google Translate 무료 API 활용)
