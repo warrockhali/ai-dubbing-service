@@ -27,9 +27,9 @@ export async function POST(req: NextRequest) {
     console.log(`[Pipeline Start] 파일: ${file.name} (${(file.size / 1024).toFixed(1)}KB), 타겟 언어: ${targetLang}`);
 
     // Step 1. 음성 추출 및 전사 (STT) - ElevenLabs Scribe v1
-    const audioBuffer = Buffer.from(await file.arrayBuffer());
+    // File 객체를 직접 전달하여 Buffer 변환 없이 원본 데이터를 유지합니다.
     console.log("[Step 1] STT 전사 시작...");
-    const { text: transcript, languageCode } = await transcribeAudio(audioBuffer, file.name);
+    const { text: transcript, languageCode } = await transcribeAudio(file);
     console.log(`[Step 1] 전사 완료. 감지된 언어: ${languageCode}, 글자수: ${transcript.length}`);
 
     // Step 2. 텍스트 번역 (Google Translate 무료 API 활용)

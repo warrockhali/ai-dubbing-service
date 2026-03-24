@@ -42,16 +42,11 @@ function getMimeType(fileName: string): string {
 /**
  * [STT] 오디오/비디오 파일을 텍스트로 전사합니다.
  * ElevenLabs의 Scribe v1 모델을 사용하며, 90+ 언어를 지원합니다.
+ * File 객체를 직접 전달하여 불필요한 Buffer 변환으로 인한 데이터 손상을 방지합니다.
  */
 export async function transcribeAudio(
-  audioBuffer: Buffer,
-  fileName: string = 'upload.mp3',
+  audioFile: File,
 ): Promise<{ text: string; languageCode: string }> {
-  const mimeType = getMimeType(fileName);
-  // File 객체로 변환 (Buffer → ArrayBuffer → Uint8Array 변환으로 타입 호환성 확보)
-  const uint8Array = new Uint8Array(audioBuffer.buffer, audioBuffer.byteOffset, audioBuffer.byteLength);
-  const audioFile = new File([uint8Array], fileName, { type: mimeType });
-
   const result = await elevenLabsClient.speechToText.convert({
     file: audioFile,
     modelId: 'scribe_v1',
