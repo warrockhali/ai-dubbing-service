@@ -96,9 +96,13 @@ export default function DashboardPage() {
         {status === 'done' && resultAudio && (
           <section className="result-section">
             <h3>🎉 더빙 완료!</h3>
-            <div className="audio-player-wrapper">
-              <audio controls src={resultAudio} className="audio-player" />
-              <a href={resultAudio} download="dubbed_audio.mp3" className="download-btn">
+            <div className="audio-player-wrapper" style={{ display: 'flex', flexDirection: 'column', gap: '15px', alignItems: 'center' }}>
+              {resultAudio.startsWith('data:video') ? (
+                <video controls src={resultAudio} className="video-player" style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000' }} />
+              ) : (
+                <audio controls src={resultAudio} className="audio-player" style={{ width: '100%' }} />
+              )}
+              <a href={resultAudio} download={resultAudio.startsWith('data:video') ? "dubbed_video.mp4" : "dubbed_audio.mp3"} className="download-btn">
                 💾 파일 다운로드
               </a>
             </div>

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { transcribeAudio, synthesizeSpeech, type SupportedLanguageCode } from "@/lib/elevenlabs";
-import { extractAudioToMp3 } from "@/lib/ffmpeg";
+import { extractAudioToMp3, mergeAudioToVideo } from "@/lib/ffmpeg";
 
 export async function POST(req: NextRequest) {
   // 1. 인증 검증 (미들웨어 이중 확인)
@@ -54,9 +54,24 @@ export async function POST(req: NextRequest) {
     const audioBuffer2 = await synthesizeSpeech(translatedText, targetLang);
     console.log(`[Step 3] TTS 완료. 오디오 크기: ${(audioBuffer2.length / 1024).toFixed(1)}KB`);
 
-    // 오디오를 Base64로 인코딩하여 클라이언트로 전달
-    const audioBase64 = audioBuffer2.toString('base64');
-    const audioUrl = `data:audio/mp3;base64,${audioBase64}`;
+    // [후처리] 원본 파일이 비디오일 경우 병합(Muxing) 수행
+    const isVideo = !!(file.name.match(/\.(mp4|mov|avi|webm)$/i) || file.type.startsWith('video/'));
+    let finalBase64: string;
+    let finalMimeType: string;
+
+    if (isVideo) {
+      console.log("[Post-processing] 원본 비디오와 더빙 오디오 병합 중...");
+      const dubbedVideoBuffer = await mergeAudioToVideo(file, audioBuffer2);
+      finalBase64 = dubbedVideoBuffer.toString('base64');
+      finalMimeType = 'video/mp4';
+      console.log(`[Post-processing] 비디오 병합 완료. 영상 크기: ${(dubbedVideoBuffer.length / 1024).toFixed(1)}KB`);
+    } else {
+      finalBase64 = audioBuffer2.toString('base64');
+      finalMimeType = 'audio/mp3';
+    }
+
+    // 미디어를 Base64로 인코딩하여 클라이언트로 전달
+    const audioUrl = `data:${finalMimeType};base64,${finalBase64}`;
 
     return NextResponse.json({
       success: true,
