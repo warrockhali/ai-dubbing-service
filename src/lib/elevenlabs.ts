@@ -10,36 +10,62 @@ export const elevenLabsClient = new ElevenLabsClient({
 
 // 지원 언어 목록 (ElevenLabs 다국어 모델 기준)
 export const SUPPORTED_LANGUAGES = {
-  en: { name: 'English', locale: 'en-US' },
-  ja: { name: 'Japanese', locale: 'ja-JP' },
-  es: { name: 'Spanish', locale: 'es-ES' },
-  zh: { name: 'Chinese', locale: 'zh-CN' },
-  ko: { name: 'Korean', locale: 'ko-KR' },
-  fr: { name: 'French', locale: 'fr-FR' },
-  de: { name: 'German', locale: 'de-DE' },
+  en: { name: 'English', locale: 'en' },
+  ja: { name: 'Japanese', locale: 'ja' },
+  es: { name: 'Spanish', locale: 'es' },
+  zh: { name: 'Chinese', locale: 'zh' },
+  ko: { name: 'Korean', locale: 'ko' },
+  fr: { name: 'French', locale: 'fr' },
+  de: { name: 'German', locale: 'de' },
 } as const;
 
 export type SupportedLanguageCode = keyof typeof SUPPORTED_LANGUAGES;
 
+// 파일 확장자 → MIME 타입 매핑 (ElevenLabs STT 지원 포맷)
+function getMimeType(fileName: string): string {
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  const mimeMap: Record<string, string> = {
+    mp3: 'audio/mpeg',
+    mp4: 'video/mp4',
+    m4a: 'audio/mp4',
+    wav: 'audio/wav',
+    webm: 'audio/webm',
+    ogg: 'audio/ogg',
+    flac: 'audio/flac',
+    aac: 'audio/aac',
+    mov: 'video/quicktime',
+    avi: 'video/x-msvideo',
+  };
+  return mimeMap[ext ?? ''] ?? 'application/octet-stream';
+}
+
 /**
  * [STT] 오디오/비디오 파일을 텍스트로 전사합니다.
- * ElevenLabs의 Scribe v2 모델을 사용하며, 90+ 언어를 지원합니다.
+ * ElevenLabs의 Scribe v1 모델을 사용하며, 90+ 언어를 지원합니다.
  */
 export async function transcribeAudio(
   audioBuffer: Buffer,
   fileName: string = 'upload.mp3',
 ): Promise<{ text: string; languageCode: string }> {
-  const audioBlob = new Blob([audioBuffer], { type: 'audio/mpeg' });
+  const mimeType = getMimeType(fileName);
+  // File 객체로 변환 (Buffer → ArrayBuffer → Uint8Array 변환으로 타입 호환성 확보)
+  const uint8Array = new Uint8Array(audioBuffer.buffer, audioBuffer.byteOffset, audioBuffer.byteLength);
+  const audioFile = new File([uint8Array], fileName, { type: mimeType });
 
   const result = await elevenLabsClient.speechToText.convert({
-    audio: audioBlob,
-    model_id: 'scribe_v1', // 최신 전사 모델
-    tag_audio_events: false,
+    file: audioFile,
+    modelId: 'scribe_v1',
+    tagAudioEvents: false,
   });
+
+  if (!result.text) {
+    console.error('[STT] API 응답 원본:', JSON.stringify(result, null, 2));
+    throw new Error('[STT] 음성 전사 결과를 반환받지 못했습니다. 파일 포맷이나 내용을 확인해주세요.');
+  }
 
   return {
     text: result.text,
-    languageCode: result.language_code ?? 'unknown',
+    languageCode: result.languageCode ?? 'unknown',
   };
 }
 
@@ -54,9 +80,9 @@ export async function synthesizeSpeech(
 ): Promise<Buffer> {
   const audioStream = await elevenLabsClient.textToSpeech.convert(voiceId, {
     text,
-    model_id: 'eleven_multilingual_v2',
-    output_format: 'mp3_44100_128',
-    language_code: SUPPORTED_LANGUAGES[targetLanguage].locale,
+    modelId: 'eleven_multilingual_v2',
+    outputFormat: 'mp3_44100_128',
+    languageCode: SUPPORTED_LANGUAGES[targetLanguage].locale,
   });
 
   // ReadableStream을 Buffer로 변환
