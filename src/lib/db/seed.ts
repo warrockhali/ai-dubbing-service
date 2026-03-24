@@ -1,3 +1,6 @@
+import * as dotenv from 'dotenv';
+dotenv.config({ path: '.env.local' });
+
 import { db } from './index';
 import { whitelist } from './schema';
 
