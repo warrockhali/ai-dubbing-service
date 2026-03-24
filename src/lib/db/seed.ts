@@ -7,10 +7,11 @@ import { whitelist } from './schema';
 async function seed() {
   console.log('🌱 Seed 작업 시작: 기본 이메일 추가');
   
-  // 과제 요구사항의 화이트리스트 기본값 추가
-  await db.insert(whitelist).values({
-    email: 'kts123@estsoft.com',
-  }).onConflictDoNothing();
+  // 과제 요구사항 필수 계정 및 서비스 관리자 계정 등록
+  const defaultEmails = ['kts123@estsoft.com', 'gkok1029@gmail.com'];
+  for (const email of defaultEmails) {
+    await db.insert(whitelist).values({ email }).onConflictDoNothing();
+  }
   
   console.log('✅ Seed 완료: kts123@estsoft.com 이메일 포함 완료');
 }
