@@ -47,3 +47,7 @@ next-env.d.ts
 
 인턴과제_v2+1.pdf
 *.pdf
+
+
+# Document exceptions
+인턴과제_v2+1.pdf
