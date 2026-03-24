@@ -51,3 +51,6 @@ next-env.d.ts
 
 # Document exceptions
 인턴과제_v2+1.pdf
+
+# Local SQLite DB
+local.db
