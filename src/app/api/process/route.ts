@@ -97,17 +97,23 @@ export async function POST(req: NextRequest) {
     if (errString.includes("quota") || errString.includes("rate limit") || errString.includes("insufficient")) {
       userMessage = "AI API 서비스(ElevenLabs)의 사용 한도(토큰)를 모두 소진했습니다. 관리자에게 문의하거나 결제 플랜을 확인해주세요.";
       statusCode = 429;
+    } else if (errString.includes("api_key") || errString.includes("unauthorized") || errString.includes("401")) {
+      userMessage = "외부 연동 API 키(Key)가 유효하지 않거나 만료되어 호출 권한이 없습니다. 시스템 관리자의 `.env` 파일 점검이 필요합니다.";
+      statusCode = 401;
     } else if (errString.includes("translate api limit") || errString.includes("429") || errString.includes("too many requests")) {
-      userMessage = "번역 API 서버에 트래픽이 몰려 요청 한도를 초과했습니다. 잠시 후 다시 시도해주시거나 공식 API 플랜으로 업그레이드해주세요.";
+      userMessage = "번역 API 서버에 트래픽이 몰려 일일 할당량을 달성했습니다. 잠시 대기하신 뒤에 다시 이용해주시거나 공식 API 플랜으로 업그레이드해주세요.";
       statusCode = 429;
     } else if (errString.includes("ffmpeg") || errString.includes("extract")) {
-      userMessage = "업로드한 미디어 파일에서 음성을 추출할 수 없습니다. 형식이 잘못되었거나 파일이 손상되었을 수 있습니다.";
+      userMessage = "업로드한 미디어 파일에서 오디오 파장 트랙을 스캔할 수 없습니다. 확장자를 변경하시거나 다른 포맷의 파일을 사용해주세요.";
       statusCode = 400;
-    } else if (errString.includes("timeout") || errString.includes("timed out")) {
-      userMessage = "미디어 처리 시간이 너무 오래 걸려 중단되었습니다. 파일 길이나 용량을 줄여서 다시 시도해주세요.";
+    } else if (errString.includes("network") || errString.includes("fetch") || errString.includes("econnrefused")) {
+      userMessage = "외부 AI 서버와의 연결이 불안정하여 타임아웃 오류가 발생했습니다. 잠시 후 다시 '더빙 시작' 버튼을 눌러주세요.";
+      statusCode = 502;
+    } else if (errString.includes("timeout") || errString.includes("timed out") || errString.includes("duration")) {
+      userMessage = "미디어 파이프라인 처리 시간이 지연되어 강제 중단되었습니다. 작업 파일 크기나 해상도를 줄이시는 것을 권장합니다.";
       statusCode = 504;
     } else if (error instanceof Error) {
-      userMessage = `처리 중 다음 이유로 중단되었습니다: ${error.message}`;
+      userMessage = `처리 중 다음 장애 사유로 중단되었습니다: ${error.message}`;
     }
 
     return NextResponse.json(
