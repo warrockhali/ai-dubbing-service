@@ -2,9 +2,12 @@
 
 import { useState } from 'react';
 import { signOut, useSession } from 'next-auth/react';
+import Script from 'next/script';
 
 declare global {
   interface Window {
+    FFmpegWASM: any;
+    FFmpegUtil: any;
     _ffmpegInstance: any;
   }
 }
@@ -31,13 +34,14 @@ export default function DashboardPage() {
 
       // 테스트 모드이면서 파일이 4.5MB 초과인 경우: 브라우저에서 먼저 20초 크롭 실행
       if (testMode && isLargeFile) {
+        if (!window.FFmpegWASM || !window.FFmpegUtil) {
+          throw new Error("브라우저용 비디오 처리 엔진(WASM)이 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
+        }
+        
         setErrorMessage('브라우저 내 미디어 엔진(FFmpeg WASM) 로딩 중... 처음 사용 시 수십 초가 소요될 수 있습니다.');
 
-        // window 전역변수 의존 없이 동적 ESM import()로 안정적으로 모듈 로드
-        const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
-          import('@ffmpeg/ffmpeg'),
-          import('@ffmpeg/util'),
-        ]);
+        const { FFmpeg } = window.FFmpegWASM;
+        const { fetchFile, toBlobURL } = window.FFmpegUtil;
 
         let ffmpeg = (window as any)._ffmpegInstance;
         if (!ffmpeg) {
@@ -197,9 +201,12 @@ export default function DashboardPage() {
                 💾 파일 다운로드
               </a>
             </div>
-          </section>
         )}
       </main>
+
+      {/* 클라이언트 측 미디어 컷팅을 위한 FFmpeg 의존성 백그라운드 로드 */}
+      <Script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js" strategy="afterInteractive" />
+      <Script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js" strategy="afterInteractive" />
     </div>
   );
 }
