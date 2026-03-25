@@ -79,13 +79,20 @@ export async function mergeAudioToVideo(originalVideoFile: File, newAudioBuffer:
         cmd.setDuration(cropSeconds);
       }
       
-      cmd.outputOptions([
-          '-map', '0:v:0',     // 첫 번째 스트림(비디오)
-          '-map', '1:a:0',     // 두 번째 스트림(새로운 오디오)
-          '-c:v', 'copy',      // 비디오 인코딩 생략 (속도 최적화)
-          '-c:a', 'aac',       // 오디오 포맷 MP4 범용 AAC 맞춤
-          '-shortest',         // 비디오 길이에 오디오 맞춤 (오디오가 더 길면 자름)
-        ])
+      const opts = [
+        '-map', '0:v:0',     // 첫 번째 스트림(비디오)
+        '-map', '1:a:0',     // 두 번째 스트림(새로운 오디오)
+        '-c:v', 'copy',      // 비디오 인코딩 생략 (속도 최적화)
+        '-c:a', 'aac',       // 오디오 포맷 MP4 범용 AAC 맞춤
+      ];
+      
+      // 테스트 모드(cropSeconds)일 때는 정확히 20초까지 영상이 유지되어야 하므로 
+      // TTS 오디오가 빨리 끝났다고 해서 영상이 먼저 잘리는(-shortest) 현상을 방지합니다.
+      if (!cropSeconds) {
+        opts.push('-shortest'); 
+      }
+      
+      cmd.outputOptions(opts)
         .output(outputPath)
         .on('end', () => resolve())
         .on('error', (err) => reject(new Error(`비디오/오디오 병합 실패: ${err.message}`)))
