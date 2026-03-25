@@ -2,13 +2,10 @@
 
 import { useState } from 'react';
 import { signOut, useSession } from 'next-auth/react';
-import Script from 'next/script';
 
 declare global {
   interface Window {
-    FFmpeg: any;
-    FFmpegUtil: any;
-    _ffmpegInstance: any; // Add this for caching FFmpeg instance
+    _ffmpegInstance: any;
   }
 }
 
@@ -26,46 +23,46 @@ export default function DashboardPage() {
     if (!file) return;
 
     setStatus('processing');
-    setErrorMessage(null); // Clear previous errors
+    setErrorMessage(null);
 
     try {
       let fileToUpload = file;
       const isLargeFile = file.size > 4.5 * 1024 * 1024;
-      
-      // 테스트 모드이면서 파일이 4.5MB 초과인 경우 Vercel 한계를 우회하기 위해 프론트엔드 크롭 실행
+
+      // 테스트 모드이면서 파일이 4.5MB 초과인 경우: 브라우저에서 먼저 20초 크롭 실행
       if (testMode && isLargeFile) {
-        if (!window.FFmpeg || !window.FFmpegUtil) {
-          throw new Error("브라우저용 비디오 처리 엔진(WASM)이 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
-        }
-        
-        setErrorMessage("브라우저 내 미디어 엔진(FFmpeg WASM)을 로딩 중입니다...");
-        
-        const { FFmpeg } = window.FFmpeg;
-        const { fetchFile, toBlobURL } = window.FFmpegUtil;
-        
+        setErrorMessage('브라우저 내 미디어 엔진(FFmpeg WASM) 로딩 중... 처음 사용 시 수십 초가 소요될 수 있습니다.');
+
+        // window 전역변수 의존 없이 동적 ESM import()로 안정적으로 모듈 로드
+        const [{ FFmpeg }, { fetchFile, toBlobURL }] = await Promise.all([
+          import('@ffmpeg/ffmpeg'),
+          import('@ffmpeg/util'),
+        ]);
+
         let ffmpeg = (window as any)._ffmpegInstance;
         if (!ffmpeg) {
           ffmpeg = new FFmpeg();
           const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
           await ffmpeg.load({
-              coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-              wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+            wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
           });
           (window as any)._ffmpegInstance = ffmpeg;
         }
 
-        setErrorMessage("대용량 파일 우회 처리 중: 로컬 브라우저에서 처음 20초 구간만 추출하고 있습니다...");
-        
-        const inputName = `input_${Date.now()}.mp4`;
-        const outputName = `output_${Date.now()}.mp4`;
+        setErrorMessage('대용량 파일 우회 처리 중: 로컬 브라우저에서 처음 20초 구간만 추출하고 있습니다...');
+
+        const ts = Date.now();
+        const inputName = `input_${ts}.mp4`;
+        const outputName = `output_${ts}.mp4`;
         await ffmpeg.writeFile(inputName, await fetchFile(file));
         await ffmpeg.exec(['-i', inputName, '-t', '20', '-c', 'copy', outputName]);
-        
-        const data = await ffmpeg.readFile(outputName);
-        fileToUpload = new File([data.buffer], `cropped_${file.name}`, { type: file.type || 'video/mp4' });
-        
+
+        const wasmData = await ffmpeg.readFile(outputName);
+        fileToUpload = new File([wasmData.buffer], `cropped_${file.name}`, { type: file.type || 'video/mp4' });
+
         console.log(`프론트엔드 크롭 우회 성공: 원본 ${(file.size/1024/1024).toFixed(1)}MB -> 크롭 ${(fileToUpload.size/1024/1024).toFixed(1)}MB`);
-        setErrorMessage("추출 완료. 서버로 안전하게 전송을 시작합니다...");
+        setErrorMessage('추출 완료. 서버로 안전하게 전송을 시작합니다...');
       }
 
       const formData = new FormData();
@@ -77,10 +74,10 @@ export default function DashboardPage() {
         method: 'POST',
         body: formData,
       });
-      
+
       let data: any = {};
       const responseText = await res.text();
-      
+
       try {
         data = JSON.parse(responseText);
       } catch (parseError) {
@@ -119,18 +116,18 @@ export default function DashboardPage() {
           </button>
         </div>
       </header>
-      
+
       <main className="dashboard-main">
         <section className="upload-section">
           <h3>신규 더빙 프로젝트</h3>
           <p className="section-desc">미디어 파일을 업로드하고 원하는 언어로 번역 및 더빙하세요.</p>
-          
+
           <form onSubmit={handleUpload} className="upload-form">
             <div className="file-drop-area">
-              <input 
-                type="file" 
-                accept="audio/*, video/*" 
-                onChange={(e) => setFile(e.target.files?.[0] || null)} 
+              <input
+                type="file"
+                accept="audio/*, video/*"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
                 className="file-input"
                 required
               />
@@ -159,8 +156,8 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            <button 
-              type="submit" 
+            <button
+              type="submit"
               className={`submit-btn ${status === 'processing' ? 'processing' : ''}`}
               disabled={status === 'processing' || !file}
             >
@@ -168,20 +165,20 @@ export default function DashboardPage() {
             </button>
           </form>
 
-          {status === 'error' && errorMessage && (
-            <div className="error-message" style={{ 
-              marginTop: '20px', 
-              padding: '15px', 
-              backgroundColor: '#ffebe9', 
-              color: '#cf222e', 
-              borderRadius: '8px', 
-              border: '1px solid #ff8182',
+          {(status === 'error' || (status === 'processing' && errorMessage)) && errorMessage && (
+            <div className="error-message" style={{
+              marginTop: '20px',
+              padding: '15px',
+              backgroundColor: status === 'error' ? '#ffebe9' : '#fff8e1',
+              color: status === 'error' ? '#cf222e' : '#7c5c00',
+              borderRadius: '8px',
+              border: `1px solid ${status === 'error' ? '#ff8182' : '#ffe082'}`,
               fontWeight: 500,
               display: 'flex',
               alignItems: 'center',
               gap: '10px'
             }}>
-              <span>🚨</span> 
+              <span>{status === 'error' ? '🚨' : '⏳'}</span>
               <span>{errorMessage}</span>
             </div>
           )}
@@ -203,10 +200,6 @@ export default function DashboardPage() {
           </section>
         )}
       </main>
-      
-      {/* 클라이언트 측 미디어 컷팅을 위한 FFmpeg 의존성 백그라운드 로드 */}
-      <Script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js" strategy="afterInteractive" />
-      <Script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js" strategy="afterInteractive" />
     </div>
   );
 }
