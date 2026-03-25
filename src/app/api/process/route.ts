@@ -41,6 +41,9 @@ export async function POST(req: NextRequest) {
     const translateRes = await fetch(
       `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${targetLang}&dt=t&q=${encodeURIComponent(transcript)}`
     );
+    if (!translateRes.ok) {
+      throw new Error(`Translate API Limit: ${translateRes.statusText}`);
+    }
     const translateData = await translateRes.json();
     // Google 번역 API 응답 파싱
     const translatedText: string = translateData[0]
@@ -81,11 +84,33 @@ export async function POST(req: NextRequest) {
       audioUrl,
     });
 
-  } catch (error) {
-    console.error("[Pipeline Error]", error instanceof Error ? error.message : error);
+  } catch (error: any) {
+    console.error("[Pipeline Error]", error);
+
+    // 에러 원인을 분석하여 사용자 친화적인 메시지로 변환
+    let userMessage = "파이프라인 처리 중 알 수 없는 오류가 발생했습니다.";
+    let statusCode = 500;
+    const errString = (error instanceof Error ? error.message : String(error)).toLowerCase();
+
+    if (errString.includes("quota") || errString.includes("rate limit") || errString.includes("insufficient")) {
+      userMessage = "AI API 서비스(ElevenLabs)의 사용 한도(토큰)를 모두 소진했습니다. 관리자에게 문의하거나 결제 플랜을 확인해주세요.";
+      statusCode = 429;
+    } else if (errString.includes("translate api limit") || errString.includes("429") || errString.includes("too many requests")) {
+      userMessage = "번역 API 서버에 트래픽이 몰려 요청 한도를 초과했습니다. 잠시 후 다시 시도해주시거나 공식 API 플랜으로 업그레이드해주세요.";
+      statusCode = 429;
+    } else if (errString.includes("ffmpeg") || errString.includes("extract")) {
+      userMessage = "업로드한 미디어 파일에서 음성을 추출할 수 없습니다. 형식이 잘못되었거나 파일이 손상되었을 수 있습니다.";
+      statusCode = 400;
+    } else if (errString.includes("timeout") || errString.includes("timed out")) {
+      userMessage = "미디어 처리 시간이 너무 오래 걸려 중단되었습니다. 파일 길이나 용량을 줄여서 다시 시도해주세요.";
+      statusCode = 504;
+    } else if (error instanceof Error) {
+      userMessage = `처리 중 다음 이유로 중단되었습니다: ${error.message}`;
+    }
+
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "파이프라인 처리 중 내부 오류가 발생했습니다." },
-      { status: 500 }
+      { error: userMessage },
+      { status: statusCode }
     );
   }
 }

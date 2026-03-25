@@ -9,6 +9,7 @@ export default function DashboardPage() {
   const [targetLang, setTargetLang] = useState('en');
   const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
   const [resultAudio, setResultAudio] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -26,12 +27,14 @@ export default function DashboardPage() {
       });
       const data = await res.json();
 
-      if (!res.ok) throw new Error(data.error || 'Server Error');
+      if (!res.ok) throw new Error(data.error || '알 수 없는 서버 오류가 발생했습니다.');
 
       setResultAudio(data.audioUrl || null);
+      setErrorMessage(null);
       setStatus('done');
-    } catch (err) {
+    } catch (err: any) {
       console.error(err);
+      setErrorMessage(err.message || '처리 중 알 수 없는 오류가 발생했습니다.');
       setStatus('error');
     }
   };
@@ -86,9 +89,21 @@ export default function DashboardPage() {
             </button>
           </form>
 
-          {status === 'error' && (
-            <div className="error-message" style={{ marginTop: '20px' }}>
-              파이프라인 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.
+          {status === 'error' && errorMessage && (
+            <div className="error-message" style={{ 
+              marginTop: '20px', 
+              padding: '15px', 
+              backgroundColor: '#ffebe9', 
+              color: '#cf222e', 
+              borderRadius: '8px', 
+              border: '1px solid #ff8182',
+              fontWeight: 500,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}>
+              <span>🚨</span> 
+              <span>{errorMessage}</span>
             </div>
           )}
         </section>
