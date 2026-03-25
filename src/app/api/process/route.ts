@@ -15,6 +15,8 @@ export async function POST(req: NextRequest) {
     const formData = await req.formData();
     const file = formData.get("file") as File;
     const targetLang = formData.get("targetLang") as SupportedLanguageCode;
+    const testMode = formData.get("testMode") === "true";
+    const cropSeconds = testMode ? 20 : undefined;
 
     if (!file || !targetLang) {
       return NextResponse.json({ error: "파일 또는 타겟 언어가 누락되었습니다." }, { status: 400 });
@@ -28,8 +30,8 @@ export async function POST(req: NextRequest) {
     console.log(`[Pipeline Start] 파일: ${file.name} (${(file.size / 1024).toFixed(1)}KB), 타겟 언어: ${targetLang}`);
 
     // [전처리] 미디어 파일을 ffmpeg으로 MP3 규격(16kHz/Mono) 강제 변환
-    console.log("[Pre-processing] 미디어 파일 MP3 추출 변환 시작...");
-    const processedFile = await extractAudioToMp3(file);
+    console.log(`[Pre-processing] 미디어 파일 MP3 추출 변환 시작... (Crop Seconds: ${cropSeconds || '전체'})`);
+    const processedFile = await extractAudioToMp3(file, cropSeconds);
 
     // Step 1. 음성 추출 및 전사 (STT) - ElevenLabs Scribe v1
     console.log("[Step 1] STT 전사 시작...");
@@ -63,8 +65,8 @@ export async function POST(req: NextRequest) {
     let finalMimeType: string;
 
     if (isVideo) {
-      console.log("[Post-processing] 원본 비디오와 더빙 오디오 병합 중...");
-      const dubbedVideoBuffer = await mergeAudioToVideo(file, audioBuffer2);
+      console.log(`[Post-processing] 원본 비디오와 더빙 오디오 병합 중... (Crop Seconds: ${cropSeconds || '전체'})`);
+      const dubbedVideoBuffer = await mergeAudioToVideo(file, audioBuffer2, cropSeconds);
       finalBase64 = dubbedVideoBuffer.toString('base64');
       finalMimeType = 'video/mp4';
       console.log(`[Post-processing] 비디오 병합 완료. 영상 크기: ${(dubbedVideoBuffer.length / 1024).toFixed(1)}KB`);

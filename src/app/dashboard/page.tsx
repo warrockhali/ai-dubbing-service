@@ -7,6 +7,7 @@ export default function DashboardPage() {
   const { data: session } = useSession();
   const [file, setFile] = useState<File | null>(null);
   const [targetLang, setTargetLang] = useState('en');
+  const [testMode, setTestMode] = useState(false);
   const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
   const [resultAudio, setResultAudio] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -19,6 +20,7 @@ export default function DashboardPage() {
     const formData = new FormData();
     formData.append('file', file);
     formData.append('targetLang', targetLang);
+    formData.append('testMode', String(testMode));
 
     try {
       const res = await fetch('/api/process', {
@@ -78,6 +80,16 @@ export default function DashboardPage() {
                 <option value="es">Spanish (스페인어)</option>
                 <option value="zh">Chinese (중국어)</option>
               </select>
+            </div>
+
+            <div className="test-mode-toggle" style={{ marginBottom: '20px', padding: '10px 15px', backgroundColor: '#f0f4ff', borderRadius: '6px', border: '1px solid #d0dfff' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, color: '#004ee6' }}>
+                <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)} style={{ width: '16px', height: '16px' }} />
+                <span>🧪 테스트 모드 활성화 (처음 20초 크롭)</span>
+              </label>
+              <p style={{ margin: '5px 0 0 24px', fontSize: '0.85rem', color: '#444' }}>
+                대용량 비디오/오디오의 앞부분 20초만 잘라서 빠르게 파이프라인(STT/번역/TTS)을 검증합니다.
+              </p>
             </div>
 
             <button 

@@ -14,7 +14,7 @@ Ffmpeg.setFfmpegPath(ffmpegPath.path);
  * ElevenLabs STT가 특정 코덱이나 AI 생성 영상을 거부하는 문제를 
  * ffmpeg 리인코딩으로 해결합니다.
  */
-export async function extractAudioToMp3(inputFile: File): Promise<File> {
+export async function extractAudioToMp3(inputFile: File, cropSeconds?: number): Promise<File> {
   const inputId = randomUUID();
   const ext = inputFile.name.split('.').pop() ?? 'mp4';
   const inputPath = join(tmpdir(), `${inputId}_input.${ext}`);
@@ -27,8 +27,11 @@ export async function extractAudioToMp3(inputFile: File): Promise<File> {
 
     // 2. ffmpeg으로 오디오 트랙만 MP3로 추출 (16kHz 모노, STT 최적화 설정)
     await new Promise<void>((resolve, reject) => {
-      Ffmpeg(inputPath)
-        .outputOptions([
+      const cmd = Ffmpeg(inputPath);
+      if (cropSeconds) {
+        cmd.setDuration(cropSeconds);
+      }
+      cmd.outputOptions([
           '-vn',          // 비디오 스트림 제거
           '-ar', '16000', // 샘플레이트 16kHz (STT 최적화)
           '-ac', '1',     // 모노 채널 (불필요한 스테레오 데이터 제거)
@@ -55,7 +58,7 @@ export async function extractAudioToMp3(inputFile: File): Promise<File> {
 /**
  * 원본 비디오에 새로운 오디오(더빙버전)를 씌웁니다 (Muxing).
  */
-export async function mergeAudioToVideo(originalVideoFile: File, newAudioBuffer: Buffer): Promise<Buffer> {
+export async function mergeAudioToVideo(originalVideoFile: File, newAudioBuffer: Buffer, cropSeconds?: number): Promise<Buffer> {
   const inputId = randomUUID();
   const videoExt = originalVideoFile.name.split('.').pop() ?? 'mp4';
   const videoPath = join(tmpdir(), `${inputId}_video.${videoExt}`);
@@ -68,10 +71,15 @@ export async function mergeAudioToVideo(originalVideoFile: File, newAudioBuffer:
     await writeFile(audioPath, newAudioBuffer);
 
     await new Promise<void>((resolve, reject) => {
-      Ffmpeg()
+      const cmd = Ffmpeg()
         .input(videoPath)
-        .input(audioPath)
-        .outputOptions([
+        .input(audioPath);
+        
+      if (cropSeconds) {
+        cmd.setDuration(cropSeconds);
+      }
+      
+      cmd.outputOptions([
           '-map', '0:v:0',     // 첫 번째 스트림(비디오)
           '-map', '1:a:0',     // 두 번째 스트림(새로운 오디오)
           '-c:v', 'copy',      // 비디오 인코딩 생략 (속도 최적화)
