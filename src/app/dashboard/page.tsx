@@ -2,7 +2,6 @@
 
 import { useState } from 'react';
 import { signOut, useSession } from 'next-auth/react';
-import Alert from '@/components/Alert';
 import Script from 'next/script';
 
 declare global {
