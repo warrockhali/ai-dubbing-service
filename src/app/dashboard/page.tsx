@@ -2,6 +2,16 @@
 
 import { useState } from 'react';
 import { signOut, useSession } from 'next-auth/react';
+import Alert from '@/components/Alert';
+import Script from 'next/script';
+
+declare global {
+  interface Window {
+    FFmpeg: any;
+    FFmpegUtil: any;
+    _ffmpegInstance: any; // Add this for caching FFmpeg instance
+  }
+}
 
 export default function DashboardPage() {
   const { data: session } = useSession();
@@ -17,12 +27,53 @@ export default function DashboardPage() {
     if (!file) return;
 
     setStatus('processing');
-    const formData = new FormData();
-    formData.append('file', file);
-    formData.append('targetLang', targetLang);
-    formData.append('testMode', String(testMode));
+    setErrorMessage(null); // Clear previous errors
 
     try {
+      let fileToUpload = file;
+      const isLargeFile = file.size > 4.5 * 1024 * 1024;
+      
+      // 테스트 모드이면서 파일이 4.5MB 초과인 경우 Vercel 한계를 우회하기 위해 프론트엔드 크롭 실행
+      if (testMode && isLargeFile) {
+        if (!window.FFmpeg || !window.FFmpegUtil) {
+          throw new Error("브라우저용 비디오 처리 엔진(WASM)이 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
+        }
+        
+        setErrorMessage("브라우저 내 미디어 엔진(FFmpeg WASM)을 로딩 중입니다...");
+        
+        const { FFmpeg } = window.FFmpeg;
+        const { fetchFile, toBlobURL } = window.FFmpegUtil;
+        
+        let ffmpeg = (window as any)._ffmpegInstance;
+        if (!ffmpeg) {
+          ffmpeg = new FFmpeg();
+          const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+          await ffmpeg.load({
+              coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+              wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+          });
+          (window as any)._ffmpegInstance = ffmpeg;
+        }
+
+        setErrorMessage("대용량 파일 우회 처리 중: 로컬 브라우저에서 처음 20초 구간만 추출하고 있습니다...");
+        
+        const inputName = `input_${Date.now()}.mp4`;
+        const outputName = `output_${Date.now()}.mp4`;
+        await ffmpeg.writeFile(inputName, await fetchFile(file));
+        await ffmpeg.exec(['-i', inputName, '-t', '20', '-c', 'copy', outputName]);
+        
+        const data = await ffmpeg.readFile(outputName);
+        fileToUpload = new File([data.buffer], `cropped_${file.name}`, { type: file.type || 'video/mp4' });
+        
+        console.log(`프론트엔드 크롭 우회 성공: 원본 ${(file.size/1024/1024).toFixed(1)}MB -> 크롭 ${(fileToUpload.size/1024/1024).toFixed(1)}MB`);
+        setErrorMessage("추출 완료. 서버로 안전하게 전송을 시작합니다...");
+      }
+
+      const formData = new FormData();
+      formData.append('file', fileToUpload);
+      formData.append('targetLang', targetLang);
+      formData.append('testMode', testMode.toString());
+
       const res = await fetch('/api/process', {
         method: 'POST',
         body: formData,
@@ -153,6 +204,10 @@ export default function DashboardPage() {
           </section>
         )}
       </main>
+      
+      {/* 클라이언트 측 미디어 컷팅을 위한 FFmpeg 의존성 백그라운드 로드 */}
+      <Script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js" strategy="afterInteractive" />
+      <Script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js" strategy="afterInteractive" />
     </div>
   );
 }
