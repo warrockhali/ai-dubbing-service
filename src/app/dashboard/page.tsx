@@ -201,6 +201,7 @@ export default function DashboardPage() {
                 💾 파일 다운로드
               </a>
             </div>
+          </section>
         )}
       </main>
 
