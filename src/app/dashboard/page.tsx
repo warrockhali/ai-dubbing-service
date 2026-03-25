@@ -47,11 +47,10 @@ export default function DashboardPage() {
         if (!ffmpeg) {
           ffmpeg = new FFmpeg();
           const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
-          const ffmpegURL = 'https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd';
           await ffmpeg.load({
             coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
             wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
-            classWorkerURL: await toBlobURL(`${ffmpegURL}/814.ffmpeg.js`, 'text/javascript'),
+            classWorkerURL: '/ffmpeg/814.ffmpeg.js',
           });
           (window as any)._ffmpegInstance = ffmpeg;
         }
@@ -207,9 +206,9 @@ export default function DashboardPage() {
         )}
       </main>
 
-      {/* 클라이언트 측 미디어 컷팅을 위한 FFmpeg 의존성 백그라운드 로드 */}
-      <Script src="https://unpkg.com/@ffmpeg/ffmpeg@0.12.6/dist/umd/ffmpeg.js" strategy="afterInteractive" />
-      <Script src="https://unpkg.com/@ffmpeg/util@0.12.1/dist/umd/index.js" strategy="afterInteractive" />
+      {/* 클라이언트 측 Web Worker CORS 제약 우회를 위한 로컬 스크립트 호스팅 */}
+      <Script src="/ffmpeg/ffmpeg.js" strategy="afterInteractive" />
+      <Script src="/ffmpeg/index.js" strategy="afterInteractive" />
     </div>
   );
 }
