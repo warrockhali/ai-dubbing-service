@@ -27,7 +27,18 @@ export default function DashboardPage() {
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
+      
+      let data: any = {};
+      const responseText = await res.text();
+      
+      try {
+        data = JSON.parse(responseText);
+      } catch (parseError) {
+        if (responseText.includes('Request Entity Too Large') || res.status === 413) {
+          throw new Error('Vercel 서버 등 호스팅 환경의 허용 용량(기본 4.5MB)을 초과하여 파일 전송이 차단되었습니다. 테스트를 위해 더 작은 용량의 파일을 업로드해 주세요.');
+        }
+        throw new Error(`서버에서 알 수 없는 응답이 돌아왔습니다 (상태코드: ${res.status}). 원본 응답 텍스트: ${responseText.substring(0, 50)}...`);
+      }
 
       if (!res.ok) throw new Error(data.error || '알 수 없는 서버 오류가 발생했습니다.');
 
