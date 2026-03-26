@@ -46,10 +46,10 @@ export default function DashboardPage() {
         let ffmpeg = (window as any)._ffmpegInstance;
         if (!ffmpeg) {
           ffmpeg = new FFmpeg();
-          const coreURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd';
+          // 기업 방화벽/프록시로 CDN이 차단되는 환경을 고려하여 모든 에셋을 Same-Origin으로 로드
           await ffmpeg.load({
-            coreURL: await toBlobURL(`${coreURL}/ffmpeg-core.js`, 'text/javascript'),
-            wasmURL: await toBlobURL(`${coreURL}/ffmpeg-core.wasm`, 'application/wasm'),
+            coreURL: '/ffmpeg/ffmpeg-core.js',
+            wasmURL: '/ffmpeg/ffmpeg-core.wasm',
             classWorkerURL: '/ffmpeg/814.ffmpeg.js',
           });
           (window as any)._ffmpegInstance = ffmpeg;
