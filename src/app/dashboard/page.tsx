@@ -12,84 +12,74 @@ declare global {
   }
 }
 
-// --- 브라우저 네이티브 Web Audio API 기반 오디오 추출 (가장 안정적인 방식) ---
-function audioBufferToWav(buffer: AudioBuffer): Blob {
-  const numOfChan = buffer.numberOfChannels;
-  const length = buffer.length * numOfChan * 2 + 44;
-  const bufferArray = new ArrayBuffer(length);
-  const view = new DataView(bufferArray);
-  let offset = 0;
-  let pos = 0;
+// --- 브라우저 네이티브 비디오 크롭 (WASM 차단 시 대체용) ---
+async function cropVideoNative(file: File, durationSec: number = 20, onProgress?: (msg: string) => void): Promise<File> {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    video.src = url;
+    video.muted = true; // 무음 처리로 백그라운드 재생
+    video.playsInline = true;
+    video.setAttribute('style', 'position:fixed; top:-9999px; left:-9999px;');
+    document.body.appendChild(video);
 
-  function setUint16(data: number) { view.setUint16(offset, data, true); offset += 2; }
-  function setUint32(data: number) { view.setUint32(offset, data, true); offset += 4; }
+    video.onloadedmetadata = () => {
+      const recordDuration = Math.min(video.duration, durationSec);
+      let stream: MediaStream;
+      
+      try {
+        stream = (video as any).captureStream ? (video as any).captureStream() : (video as any).mozCaptureStream();
+      } catch (err) {
+        cleanup();
+        return reject(new Error("이 브라우저에서는 네이티브 비디오 추출(captureStream)이 지원되지 않습니다."));
+      }
 
-  setUint32(0x46464952); // "RIFF"
-  setUint32(length - 8); // file length - 8
-  setUint32(0x45564157); // "WAVE"
-  setUint32(0x20746d66); // "fmt " chunk
-  setUint32(16);         // length = 16
-  setUint16(1);          // PCM
-  setUint16(numOfChan);
-  setUint32(buffer.sampleRate);
-  setUint32(buffer.sampleRate * 2 * numOfChan);
-  setUint16(numOfChan * 2);
-  setUint16(16);
-  setUint32(0x61746164); // "data" chunk
-  setUint32(length - pos - 4); // chunk length
+      // WebM 코덱 (대부분의 모던 브라우저 지원, 백엔드 FFmpeg 호환)
+      const options = MediaRecorder.isTypeSupported('video/webm; codecs=vp9,opus') 
+        ? { mimeType: 'video/webm; codecs=vp9,opus' } 
+        : { mimeType: 'video/webm' };
 
-  const channels: Float32Array[] = [];
-  for (let i = 0; i < buffer.numberOfChannels; i++) {
-    channels.push(buffer.getChannelData(i));
-  }
+      const recorder = new MediaRecorder(stream, options);
+      const chunks: Blob[] = [];
 
-  while (pos < buffer.length) {
-    for (let i = 0; i < numOfChan; i++) {
-      let sample = Math.max(-1, Math.min(1, channels[i][pos]));
-      sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0;
-      view.setInt16(offset, sample, true);
-      offset += 2;
+      recorder.ondataavailable = e => {
+        if (e.data && e.data.size > 0) chunks.push(e.data);
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        cleanup();
+        resolve(new File([blob], `cropped_${file.name}.webm`, { type: 'video/webm' }));
+      };
+
+      video.play().then(() => {
+        recorder.start();
+        if (onProgress) onProgress(`네이티브 화면 캡처(크롭) 진행 중... (약 ${Math.ceil(recordDuration)}초 소요 대기)`);
+        
+        setTimeout(() => {
+          if (recorder.state === "recording") {
+            recorder.stop();
+          }
+          video.pause();
+        }, recordDuration * 1000);
+      }).catch(err => {
+        cleanup();
+        reject(err);
+      });
+    };
+
+    video.onerror = () => {
+      cleanup();
+      reject(new Error("비디오 로드에 실패했습니다. 올바른 포맷인지 확인해주세요."));
+    };
+
+    function cleanup() {
+      if (document.body.contains(video)) {
+        document.body.removeChild(video);
+      }
+      URL.revokeObjectURL(url);
     }
-    pos++;
-  }
-  return new Blob([bufferArray], { type: 'audio/wav' });
-}
-
-async function extractAudioNative(file: File, testMode: boolean): Promise<File> {
-  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-  if (!AudioContextClass) throw new Error("브라우저가 Web Audio API를 지원하지 않습니다.");
-  
-  const ctx = new AudioContextClass();
-  const arrayBuffer = await file.arrayBuffer();
-  
-  // 1. 전체 오디오 버퍼 스캔 및 디코딩 (순수 네이티브 메모리 연산)
-  const decodedData = await ctx.decodeAudioData(arrayBuffer);
-  
-  // 2. 극한의 최적화: 16,000Hz, Mono(1채널) 다운샘플링으로 용량 최소화
-  const targetSampleRate = 16000; 
-  
-  // 테스트 모드(20초) 또는 원본 전체 길이에 맞춰 오디오 타임라인 자르기
-  const targetDuration = testMode ? 20 : decodedData.duration;
-  const lengthToRender = Math.min(
-    Math.floor(decodedData.length * (targetSampleRate / decodedData.sampleRate)),
-    targetSampleRate * targetDuration
-  );
-  
-  const offlineCtx = new OfflineAudioContext(1, lengthToRender, targetSampleRate);
-  
-  // 3. 브라우저 내부 하드웨어 가속을 이용한 믹싱/다운샘플링 커넥션
-  const source = offlineCtx.createBufferSource();
-  source.buffer = decodedData; 
-  source.connect(offlineCtx.destination);
-  source.start(0);
-  
-  const renderedBuffer = await offlineCtx.startRendering();
-  
-  // 4. 경량화된 데이터를 WAV Blob으로 바이너리 인코딩
-  const wavBlob = audioBufferToWav(renderedBuffer);
-  
-  // 외부 종속성 0%의 최적화 성공
-  return new File([wavBlob], `compressed_audio_${file.name}.wav`, { type: 'audio/wav' });
+  });
 }
 
 export default function DashboardPage() {
@@ -112,20 +102,19 @@ export default function DashboardPage() {
       let fileToUpload = file;
       const isLargeFile = file.size > 4.5 * 1024 * 1024; // 4.5MB 기준선
 
-      // 파일크기 4.5MB 초과 시 무조건 최고 성능 효율 아키텍처(순수 Web Audio API)로 전환
-      if (isLargeFile) {
-        setErrorMessage('4.5MB 초과 파일 처리 중: 브라우저 네이티브 API (Web Audio API)를 통해 영상을 분리하고 오디오 신호망을 극한 압축 중입니다 (WASM 미사용 안전 모드)...');
-        console.log(`[Native Audio Extraction] 4.5MB 초과 감지. 파일: ${file.name} / ${file.size} bytes`);
+      // 파일크기 4.5MB 초과 및 테스트 모드 활성화 시 네이티브 크롭 진행
+      if (testMode && isLargeFile) {
+        console.log(`[Native Video Crop] 4.5MB 초과 감지. 파일: ${file.name} / ${file.size} bytes`);
         
         try {
-          const compressedAudioWav = await extractAudioNative(file, testMode);
-          fileToUpload = compressedAudioWav;
+          const croppedWebm = await cropVideoNative(file, 20, (msg) => setErrorMessage(msg));
+          fileToUpload = croppedWebm;
           
-          console.log(`[Success] 오디오 추출 압축 성공: ${(compressedAudioWav.size / 1024 / 1024).toFixed(2)}MB (Vercel 한계치 통과)`);
-          setErrorMessage('오디오 단일 강제 압축 완료. 안정적으로 서버 더빙 전송을 시작합니다...');
-        } catch (audioErr) {
-          console.error("Audio extraction failed:", audioErr);
-          throw new Error("브라우저 내 오디오 압축 처리 중 오류가 발생했습니다. 지원되지 않는 코덱일 수 있습니다.");
+          console.log(`[Success] 비디오 네이티브 크롭 성공: ${(croppedWebm.size / 1024 / 1024).toFixed(2)}MB`);
+          setErrorMessage('20초 테스트 영상 분할 완료. 서버 전달을 시작합니다...');
+        } catch (cropErr) {
+          console.error("Video crop failed:", cropErr);
+          throw new Error("브라우저 내 영상 분할(Crop) 중 오류가 발생했습니다. 지원되는 비디오 형식이 아닐 수 있습니다.");
         }
       }
 
@@ -218,11 +207,6 @@ export default function DashboardPage() {
               <p style={{ margin: '5px 0 0 24px', fontSize: '0.85rem', color: '#444' }}>
                 대용량 비디오/오디오의 앞부분 20초만 잘라서 빠르게 파이프라인(STT/번역/TTS)을 검증합니다.
               </p>
-              <div style={{ margin: '10px 0 0 24px', padding: '10px 12px', backgroundColor: '#eef6ff', color: '#0056b3', borderRadius: '4px', fontSize: '0.85rem', border: '1px solid #cce5ff', lineHeight: '1.4' }}>
-                💡 <b>최상급 안전성 클라이언트 아키텍처:</b> 4.5MB 초과 파일에 대해 불안정한 외부 CDN이나 WASM 보안 정책을 완전히 배제하고,<br/>
-                브라우저 내부 **네이티브 Web Audio API**만을 단독 사용하여 신호 단위를 <u>16kHz 모노 데이터로 극한 자가 압축/분할</u> 전구간 전송합니다.<br/>
-                <i>(이 경우 비디오 합성을 스킵하고 더빙된 오디오만 최고속으로 반환 받습니다.)</i>
-              </div>
             </div>
 
             <button
