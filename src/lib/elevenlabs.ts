@@ -168,8 +168,9 @@ export async function synthesizeSpeech(
   const apiKey = process.env.ELEVENLABS_API_KEY;
   if (!apiKey) throw new Error("ELEVENLABS_API_KEY가 설정되지 않았습니다");
 
-  // 환경변수로 음성 ID 커스터마이징 가능 (기본값: Rachel)
-  const voiceId = process.env.ELEVENLABS_VOICE_ID || "21m00Tcm4TlvDq8ikWAM";
+  // 무료 플랜 호환 기본 보이스: "Adam" (pNInz6obpgDQGcFmaJgB)
+  // 환경변수 ELEVENLABS_VOICE_ID로 재정의 가능
+  const voiceId = process.env.ELEVENLABS_VOICE_ID || "pNInz6obpgDQGcFmaJgB";
 
   const response = await fetch(
     `${ELEVENLABS_API_BASE}/text-to-speech/${voiceId}/with-timestamps`,
@@ -181,8 +182,8 @@ export async function synthesizeSpeech(
       },
       body: JSON.stringify({
         text,
-        // 다국어 지원 모델 (한국어, 영어, 일본어, 스페인어 등 지원)
-        model_id: "eleven_multilingual_v2",
+        // eleven_flash_v2_5: 무료 플랜에서 사용 가능한 다국어 지원 모델
+        model_id: "eleven_flash_v2_5",
         voice_settings: {
           stability: 0.5,
           similarity_boost: 0.75,

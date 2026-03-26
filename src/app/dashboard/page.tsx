@@ -90,10 +90,15 @@ export default function DashboardPage() {
   const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   
-  // 상태 변경 (결과값 저장용)
+  // 결과값 저장
   const [resultData, setResultData] = useState<any>(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [originalVideoUrl, setOriginalVideoUrl] = useState<string | null>(null);
+
+  // 구간 선택 상태
+  const [useTimeRange, setUseTimeRange] = useState(false);
+  const [startTimeSec, setStartTimeSec] = useState(0);
+  const [endTimeSec, setEndTimeSec] = useState(30);
 
   useEffect(() => {
     if (file && file.type.startsWith("video/")) {
@@ -148,7 +153,9 @@ export default function DashboardPage() {
           chunkUrls, 
           targetLanguage: targetLang, 
           fileName: file.name, 
-          mimeType: file.type 
+          mimeType: file.type,
+          // 구간 선택이 활성화된 경우에만 포함
+          ...(useTimeRange && { startTime: startTimeSec, endTime: endTimeSec }),
         }),
       });
 
@@ -205,6 +212,60 @@ export default function DashboardPage() {
               <div className="file-msg">
                 {file ? file.name : '클릭하거나 파일을 드래그하여 업로드'}
               </div>
+            </div>
+
+            <div className="lang-select-group">
+              <label>타겟 언어:</label>
+              <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} className="lang-select">
+                <option value="en">English (영어)</option>
+                <option value="ja">Japanese (일본어)</option>
+                <option value="es">Spanish (스페인어)</option>
+                <option value="zh">Chinese (중국어)</option>
+                <option value="ko">Korean (한국어)</option>
+                <option value="fr">French (프랑스어)</option>
+                <option value="de">German (독일어)</option>
+              </select>
+            </div>
+
+            <div className="test-mode-toggle" style={{ marginBottom: '16px', padding: '12px 15px', backgroundColor: '#f0f4ff', borderRadius: '8px', border: '1px solid #d0dfff' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, color: '#004ee6', marginBottom: '0' }}>
+                <input type="checkbox" checked={useTimeRange} onChange={(e) => setUseTimeRange(e.target.checked)} style={{ width: '16px', height: '16px' }} />
+                <span>✂️ 구간 선택 더빙 (일부분만 더빙)</span>
+              </label>
+              {useTimeRange && (
+                <div style={{ display: 'flex', gap: '16px', marginTop: '10px', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                    <label style={{ fontSize: '0.8rem', color: '#444', fontWeight: 500 }}>시작 (초)</label>
+                    <input
+                      type="number"
+                      min={0}
+                      step={0.1}
+                      value={startTimeSec}
+                      onChange={(e) => setStartTimeSec(parseFloat(e.target.value) || 0)}
+                      style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #c0cfe8', fontSize: '0.9rem' }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', flex: 1 }}>
+                    <label style={{ fontSize: '0.8rem', color: '#444', fontWeight: 500 }}>종료 (초)</label>
+                    <input
+                      type="number"
+                      min={0.1}
+                      step={0.1}
+                      value={endTimeSec}
+                      onChange={(e) => setEndTimeSec(parseFloat(e.target.value) || 30)}
+                      style={{ padding: '6px 10px', borderRadius: '6px', border: '1px solid #c0cfe8', fontSize: '0.9rem' }}
+                    />
+                  </div>
+                  <div style={{ paddingTop: '20px', fontSize: '0.85rem', color: '#555' }}>
+                    ({(endTimeSec - startTimeSec).toFixed(1)}초 구간)
+                  </div>
+                </div>
+              )}
+              {!useTimeRange && (
+                <p style={{ margin: '5px 0 0 24px', fontSize: '0.82rem', color: '#555' }}>
+                  활성화 시 지정 구간의 STT 결과만 사용해 번역·더빙합니다.
+                </p>
+              )}
             </div>
 
             <button

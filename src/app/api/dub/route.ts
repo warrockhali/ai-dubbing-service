@@ -44,6 +44,9 @@ export async function POST(request: NextRequest) {
     const targetLanguage = body.targetLanguage as string;
     const fileName = body.fileName as string;
     const mimeType = (body.mimeType as string) || "audio/mpeg";
+    // 구간 선택 파라미터 (초 단위, 미지정 시 전체 처리)
+    const startTime = typeof body.startTime === "number" ? body.startTime : null;
+    const endTime = typeof body.endTime === "number" ? body.endTime : null;
 
     if (!chunkUrls?.length || !targetLanguage) {
       return NextResponse.json(
@@ -71,7 +74,23 @@ export async function POST(request: NextRequest) {
     const fileBuffer = Buffer.concat(chunkBuffers);
 
     console.log("1단계: 음성 인식(STT) 처리 중...");
-    const { text: transcription, words } = await transcribeAudio(fileBuffer, mimeType);
+    const { text: fullTranscription, words: fullWords } = await transcribeAudio(fileBuffer, mimeType);
+
+    // 구간 필터링: startTime/endTime이 지정된 경우 해당 범위 단어만 사용
+    const words = (startTime !== null || endTime !== null)
+      ? fullWords.filter(w => 
+          (startTime === null || w.start >= startTime) &&
+          (endTime === null || w.end <= endTime)
+        ).map(w => ({
+          ...w,
+          // 단어 타임스탬프를 구간 시작 기준으로 정규화
+          start: w.start - (startTime ?? 0),
+          end: w.end - (startTime ?? 0),
+        }))
+      : fullWords;
+
+    const transcription = words.filter(w => w.type === "word").map(w => w.text).join(" ") || fullTranscription;
+
     if (!transcription.trim()) {
       throw new Error("음성에서 텍스트를 인식할 수 없습니다");
     }
