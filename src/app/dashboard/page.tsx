@@ -315,9 +315,6 @@ export default function DashboardPage() {
         )}
       </main>
 
-      {/* 클라이언트 측 Web Worker CORS 제약 우회를 위한 로컬 스크립트 호스팅 */}
-      <Script src="/ffmpeg/ffmpeg.js" strategy="afterInteractive" />
-      <Script src="/ffmpeg/index.js" strategy="afterInteractive" />
     </div>
   );
 }
