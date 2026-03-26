@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { signOut, useSession } from 'next-auth/react';
 import Script from 'next/script';
 
@@ -20,6 +20,24 @@ export default function DashboardPage() {
   const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
   const [resultAudio, setResultAudio] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [wasmAvailable, setWasmAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    const checkWasm = async () => {
+      try {
+        if (typeof WebAssembly === 'object' && typeof WebAssembly.validate === 'function') {
+          // WebAssembly 최소 검증 바이트
+          const isValid = WebAssembly.validate(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]));
+          setWasmAvailable(isValid);
+        } else {
+          setWasmAvailable(false);
+        }
+      } catch {
+        setWasmAvailable(false);
+      }
+    };
+    checkWasm();
+  }, []);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -159,6 +177,13 @@ export default function DashboardPage() {
               <p style={{ margin: '5px 0 0 24px', fontSize: '0.85rem', color: '#444' }}>
                 대용량 비디오/오디오의 앞부분 20초만 잘라서 빠르게 파이프라인(STT/번역/TTS)을 검증합니다.
               </p>
+              {wasmAvailable === false && (
+                <div style={{ margin: '10px 0 0 24px', padding: '10px 12px', backgroundColor: '#fff3cd', color: '#856404', borderRadius: '4px', fontSize: '0.85rem', border: '1px solid #ffeeba', lineHeight: '1.4' }}>
+                  ⚠️ <b>시스템(브라우저) 경고:</b> 현재 환경(기업 관리형 브라우저 등)의 보안 정책으로 WebAssembly 연산 엔진이 <b>강제 차단</b>되어 있습니다.<br/>
+                  이 경우 4.5MB 초과 대용량 파일은 브라우저 컷팅 처리 불가로 업로드가 실패하게 됩니다.<br/>
+                  <b>4.5MB 이하 소용량 테스트 컷을 사용하시거나, 제약이 없는 개인 PC/브라우저로 접속해주세요.</b>
+                </div>
+              )}
             </div>
 
             <button
