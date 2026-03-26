@@ -1,4 +1,4 @@
-﻿# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
 # dependencies
 /node_modules
@@ -54,3 +54,6 @@ next-env.d.ts
 
 # Local SQLite DB
 local.db
+
+# 로컬 참조용 레퍼런스 프로젝트 (GitHub 업로드 제외)
+/ref-repo
