@@ -3,6 +3,7 @@ import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
 import { transcribeAudio, createSubtitleSegments, computeSyncMap, SUPPORTED_LANGUAGES } from "@/lib/elevenlabs";
 import { synthesizeSpeech } from "@/lib/elevenlabs";
+import { del } from "@vercel/blob";
 
 async function translateTextGoogle(text: string, targetLang: string) {
   const translateRes = await fetch(
@@ -125,18 +126,7 @@ export async function POST(request: NextRequest) {
   } finally {
     // 청크 삭제
     if (chunkUrls.length > 0) {
-      const token = process.env.BLOB_READ_WRITE_TOKEN;
-      if (token) {
-        await fetch("https://blob.vercel-storage.com/delete", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${token}`,
-            "x-api-version": "7",
-            "content-type": "application/json",
-          },
-          body: JSON.stringify({ urls: chunkUrls }),
-        }).catch(err => console.error("Blob deletion failed:", err));
-      }
+      await Promise.all(chunkUrls.map((url: string) => del(url).catch(console.error)));
     }
   }
 }

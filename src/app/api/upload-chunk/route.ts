@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
+import { put } from "@vercel/blob";
 
 export const maxDuration = 60;
 
@@ -20,20 +21,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "필수 파라미터가 없습니다" }, { status: 400 });
     }
 
-    const token = process.env.BLOB_READ_WRITE_TOKEN;
-    if (!token) throw new Error("BLOB_READ_WRITE_TOKEN 설정 오류");
-
-    const res = await fetch(`https://blob.vercel-storage.com/chunks/${uploadId}/${partNumber}`, {
-      method: "PUT",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "x-api-version": "7"
-      },
-      body: chunk
+    const blob = await put(`chunks/${uploadId}/${partNumber}`, chunk, {
+      access: "public",
+      addRandomSuffix: false,
     });
-    
-    if (!res.ok) throw new Error("Vercel Blob REST Upload Failed");
-    const blob = await res.json();
 
     return NextResponse.json({ chunkUrl: blob.url });
   } catch (error) {

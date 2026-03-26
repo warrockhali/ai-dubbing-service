@@ -12,6 +12,7 @@
     "@elevenlabs/elevenlabs-js": "^2.40.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@libsql/client": "^0.17.2",
+    "@vercel/blob": "^0.27.3",
     "drizzle-orm": "^0.45.1",
     "elevenlabs": "^1.59.0",
     "fluent-ffmpeg": "^2.1.3",
