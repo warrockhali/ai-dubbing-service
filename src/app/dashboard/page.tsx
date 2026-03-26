@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import { signOut, useSession } from 'next-auth/react';
 import Script from 'next/script';
+import AudioPlayer from '@/components/AudioPlayer';
 
 declare global {
   interface Window {
@@ -86,10 +87,23 @@ export default function DashboardPage() {
   const { data: session } = useSession();
   const [file, setFile] = useState<File | null>(null);
   const [targetLang, setTargetLang] = useState('en');
-  const [testMode, setTestMode] = useState(false);
   const [status, setStatus] = useState<'idle' | 'processing' | 'done' | 'error'>('idle');
-  const [resultAudio, setResultAudio] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  
+  // 상태 변경 (결과값 저장용)
+  const [resultData, setResultData] = useState<any>(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [originalVideoUrl, setOriginalVideoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (file && file.type.startsWith("video/")) {
+      const url = URL.createObjectURL(file);
+      setOriginalVideoUrl(url);
+      return () => URL.revokeObjectURL(url);
+    } else {
+      setOriginalVideoUrl(null);
+    }
+  }, [file]);
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -97,58 +111,62 @@ export default function DashboardPage() {
 
     setStatus('processing');
     setErrorMessage(null);
+    setUploadProgress(0);
 
     try {
-      let fileToUpload = file;
-      const isLargeFile = file.size > 4.5 * 1024 * 1024; // 4.5MB 기준선
+      // 1. Vercel Blob 청크 업로드
+      const CHUNK_SIZE = 4 * 1024 * 1024; // 4MB
+      const uploadId = `${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+      const chunkUrls: string[] = [];
 
-      // 파일크기 4.5MB 초과 및 테스트 모드 활성화 시 네이티브 크롭 진행
-      if (testMode && isLargeFile) {
-        console.log(`[Native Video Crop] 4.5MB 초과 감지. 파일: ${file.name} / ${file.size} bytes`);
-        
-        try {
-          const croppedWebm = await cropVideoNative(file, 20, (msg) => setErrorMessage(msg));
-          fileToUpload = croppedWebm;
-          
-          console.log(`[Success] 비디오 네이티브 크롭 성공: ${(croppedWebm.size / 1024 / 1024).toFixed(2)}MB`);
-          setErrorMessage('20초 테스트 영상 분할 완료. 서버 전달을 시작합니다...');
-        } catch (cropErr) {
-          console.error("Video crop failed:", cropErr);
-          throw new Error("브라우저 내 영상 분할(Crop) 중 오류가 발생했습니다. 지원되는 비디오 형식이 아닐 수 있습니다.");
+      for (let i = 0; i < totalChunks; i++) {
+        const start = i * CHUNK_SIZE;
+        const chunk = file.slice(start, Math.min(start + CHUNK_SIZE, file.size));
+        const formData = new FormData();
+        formData.append("chunk", chunk, `chunk_${i}`);
+        formData.append("uploadId", uploadId);
+        formData.append("partNumber", String(i));
+
+        const res = await fetch("/api/upload-chunk", { method: "POST", body: formData });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `파일 업로드 실패 (${i + 1}/${totalChunks})`);
         }
+        const { chunkUrl } = await res.json();
+        chunkUrls.push(chunkUrl);
+        setUploadProgress(Math.round(((i + 1) / totalChunks) * 100));
       }
 
-      const formData = new FormData();
-      formData.append('file', fileToUpload);
-      formData.append('targetLang', targetLang);
-      formData.append('testMode', testMode.toString());
+      setErrorMessage("파일 업로드 완료. STT / 번역 / TTS 처리 중입니다...");
 
-      const res = await fetch('/api/process', {
-        method: 'POST',
-        body: formData,
+      // 2. /api/dub 서버리스 호출
+      const response = await fetch("/api/dub", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          chunkUrls, 
+          targetLanguage: targetLang, 
+          fileName: file.name, 
+          mimeType: file.type 
+        }),
       });
 
-      let data: any = {};
-      const responseText = await res.text();
-
-      try {
-        data = JSON.parse(responseText);
-      } catch (parseError) {
-        if (responseText.includes('Request Entity Too Large') || res.status === 413) {
-          throw new Error('Vercel 서버 등 호스팅 환경의 허용 용량(기본 4.5MB)을 초과하여 파일 전송이 차단되었습니다. 테스트를 위해 더 작은 용량의 파일을 업로드해 주세요.');
-        } else if (res.status === 504 || responseText.includes('TIMEOUT')) {
-          throw new Error('서버 처리 시간이 지연되어 네트워크 응답이 끊어졌습니다(서버리스 함수 시간 초과). 더 짧은 영상이나 테스트 모드(20초 크롭)를 활용해 주세요.');
-        } else if (res.status === 401 || res.status === 403) {
-          throw new Error('보안 정책에 의해 차단되었습니다. 로그인 세션이 만료되었거나 화이트리스트 접근 권한이 없는 계정입니다.');
-        } else if (res.status >= 500) {
-          throw new Error('서버 내부에서 예상치 못한 심각한 장애가 발생했습니다. 잠시 후 폼을 새로고침하여 다시 시도해 주세요.');
+      if (!response.ok) {
+        let errData;
+        try {
+          errData = await response.json();
+        } catch(e) {
+          throw new Error('서버 처리 시간이 지연되어 네트워크 응답이 끊어졌습니다(서버리스 함수 시간 초과).');
         }
-        throw new Error(`알 수 없는 응답 형식(비정상 JSON)을 서버로부터 받았습니다 (코드: ${res.status}). 원본: ${responseText.substring(0, 30)}...`);
+        throw new Error(errData.error || "더빙 처리 중 오류가 발생했습니다");
       }
 
-      if (!res.ok) throw new Error(data.error || '알 수 없는 서버 오류가 발생했습니다.');
-
-      setResultAudio(data.audioUrl || null);
+      const data = await response.json();
+      setResultData({
+        ...data,
+        originalVideoUrl: originalVideoUrl
+      });
       setErrorMessage(null);
       setStatus('done');
     } catch (err: any) {
@@ -164,7 +182,7 @@ export default function DashboardPage() {
         <h2>🚀 AI Dubbing Studio</h2>
         <div className="header-actions">
           <span className="user-email">{session?.user?.email}</span>
-          <button onClick={() => signOut({ callbackUrl: '/login' })} className="logout-btn">
+          <button onClick={() => signOut({ callbackUrl: '/' })} className="logout-btn">
             로그아웃
           </button>
         </div>
@@ -189,32 +207,12 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <div className="lang-select-group">
-              <label>타겟 언어:</label>
-              <select value={targetLang} onChange={(e) => setTargetLang(e.target.value)} className="lang-select">
-                <option value="en">English (영어)</option>
-                <option value="ja">Japanese (일본어)</option>
-                <option value="es">Spanish (스페인어)</option>
-                <option value="zh">Chinese (중국어)</option>
-              </select>
-            </div>
-
-            <div className="test-mode-toggle" style={{ marginBottom: '20px', padding: '10px 15px', backgroundColor: '#f0f4ff', borderRadius: '6px', border: '1px solid #d0dfff' }}>
-              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontWeight: 600, color: '#004ee6' }}>
-                <input type="checkbox" checked={testMode} onChange={(e) => setTestMode(e.target.checked)} style={{ width: '16px', height: '16px' }} />
-                <span>🧪 테스트 모드 활성화 (처음 20초 크롭)</span>
-              </label>
-              <p style={{ margin: '5px 0 0 24px', fontSize: '0.85rem', color: '#444' }}>
-                대용량 비디오/오디오의 앞부분 20초만 잘라서 빠르게 파이프라인(STT/번역/TTS)을 검증합니다.
-              </p>
-            </div>
-
             <button
               type="submit"
               className={`submit-btn ${status === 'processing' ? 'processing' : ''}`}
               disabled={status === 'processing' || !file}
             >
-              {status === 'processing' ? '더빙 파이프라인 진행 중...' : '더빙 시작'}
+              {status === 'processing' ? `처리 중... (업로드 ${uploadProgress}%)` : '더빙 시작'}
             </button>
           </form>
 
@@ -237,18 +235,20 @@ export default function DashboardPage() {
           )}
         </section>
 
-        {status === 'done' && resultAudio && (
-          <section className="result-section">
+        {status === 'done' && resultData && (
+          <section className="result-section" style={{ marginTop: '30px' }}>
             <h3>🎉 더빙 완료!</h3>
-            <div className="audio-player-wrapper" style={{ display: 'flex', flexDirection: 'column', gap: '15px', alignItems: 'center' }}>
-              {resultAudio.startsWith('data:video') ? (
-                <video controls src={resultAudio} className="video-player" style={{ width: '100%', maxHeight: '400px', borderRadius: '8px', backgroundColor: '#000' }} />
-              ) : (
-                <audio controls src={resultAudio} className="audio-player" style={{ width: '100%' }} />
-              )}
-              <a href={resultAudio} download={resultAudio.startsWith('data:video') ? "dubbed_video.mp4" : "dubbed_audio.mp3"} className="download-btn">
-                💾 파일 다운로드
-              </a>
+            <div style={{ padding: '20px', backgroundColor: '#1a1a2e', borderRadius: '12px' }}>
+              <AudioPlayer 
+                audioUrl={resultData.audioUrl}
+                fileName={resultData.fileName || file?.name || 'dubbed_audio.mp3'}
+                transcription={resultData.transcription}
+                translatedText={resultData.translatedText}
+                targetLanguage={targetLang}
+                originalVideoUrl={resultData.originalVideoUrl}
+                subtitles={resultData.subtitles}
+                syncMap={resultData.syncMap}
+              />
             </div>
           </section>
         )}
