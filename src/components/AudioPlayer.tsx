@@ -65,17 +65,30 @@ export default function AudioPlayer({
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  // 동기화 재생: 원본 영상 + 더빙 오디오를 같이 재생
+  // 동기화 재생: 원본 영상(음소거) + 더빙 오디오를 같이 재생
+  // 원본 영상의 원래 음성이 더빙 오디오와 섞이지 않도록 동기화 중에는 음소거 처리
   const handleSyncPlay = () => {
-    const video = videoRef.current;
-    const audio = audioRef.current;
-    if (!video || !audio) return;
+    const video = videoRef.current;       // 왼쪽 원본 영상
+    const dubVideo = dubVideoRef.current; // 오른쪽 더빙 영상 (항상 muted)
+    const audio = audioRef.current;       // 더빙 오디오
+    if (!video || !dubVideo || !audio) return;
+
     if (isSyncing) {
-      video.pause(); audio.pause();
+      // 정지: 원본 영상 음소거 해제, 모두 정지
+      video.muted = false;
+      video.pause();
+      dubVideo.pause();
+      audio.pause();
       setIsSyncing(false);
     } else {
-      video.currentTime = 0; audio.currentTime = 0;
-      video.play(); audio.play();
+      // 재생: 원본 영상 음소거 후 양쪽 영상 + 더빙 오디오 동기화 재생
+      video.currentTime = 0;
+      dubVideo.currentTime = 0;
+      audio.currentTime = 0;
+      video.muted = true; // 원본 음성 차단 - 더빙 오디오만 들리도록
+      video.play();
+      dubVideo.play();
+      audio.play();
       setIsSyncing(true);
     }
   };
