@@ -12,6 +12,80 @@ declare global {
   }
 }
 
+// --- Web Audio API 기반 오디오 추출 (WASM 차단/실패 시 Fallback) ---
+function audioBufferToWav(buffer: AudioBuffer): Blob {
+  const numOfChan = buffer.numberOfChannels;
+  const length = buffer.length * numOfChan * 2 + 44;
+  const bufferArray = new ArrayBuffer(length);
+  const view = new DataView(bufferArray);
+  let offset = 0;
+  let pos = 0;
+
+  function setUint16(data: number) { view.setUint16(offset, data, true); offset += 2; }
+  function setUint32(data: number) { view.setUint32(offset, data, true); offset += 4; }
+
+  setUint32(0x46464952); // "RIFF"
+  setUint32(length - 8); // file length - 8
+  setUint32(0x45564157); // "WAVE"
+  setUint32(0x20746d66); // "fmt " chunk
+  setUint32(16);         // length = 16
+  setUint16(1);          // PCM
+  setUint16(numOfChan);
+  setUint32(buffer.sampleRate);
+  setUint32(buffer.sampleRate * 2 * numOfChan);
+  setUint16(numOfChan * 2);
+  setUint16(16);
+  setUint32(0x61746164); // "data" chunk
+  setUint32(length - pos - 4); // chunk length
+
+  const channels: Float32Array[] = [];
+  for (let i = 0; i < buffer.numberOfChannels; i++) {
+    channels.push(buffer.getChannelData(i));
+  }
+
+  while (pos < buffer.length) {
+    for (let i = 0; i < numOfChan; i++) {
+      let sample = Math.max(-1, Math.min(1, channels[i][pos]));
+      sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0;
+      view.setInt16(offset, sample, true);
+      offset += 2;
+    }
+    pos++;
+  }
+  return new Blob([bufferArray], { type: 'audio/wav' });
+}
+
+async function extractAudioFallback(file: File, durationSec: number = 20): Promise<File> {
+  const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+  if (!AudioContextClass) throw new Error("브라우저가 Web Audio API를 지원하지 않습니다.");
+  
+  const ctx = new AudioContextClass();
+  const arrayBuffer = await file.arrayBuffer();
+  
+  // 전체 오디오 버퍼 디코딩 (메모리 로드)
+  const decodedData = await ctx.decodeAudioData(arrayBuffer);
+  
+  // 16000Hz, Mono로 다운샘플링하여 용량 극한 극복 (Vercel 4.5MB 제한 원천 차단)
+  const targetSampleRate = 16000; 
+  const lengthToRender = Math.min(
+    Math.floor(decodedData.length * (targetSampleRate / decodedData.sampleRate)),
+    targetSampleRate * durationSec
+  );
+  
+  const offlineCtx = new OfflineAudioContext(1, lengthToRender, targetSampleRate);
+  
+  const source = offlineCtx.createBufferSource();
+  source.buffer = decodedData; // 자동 다운샘플링/모노 믹싱 수행
+  source.connect(offlineCtx.destination);
+  source.start(0);
+  
+  const renderedBuffer = await offlineCtx.startRendering();
+  const wavBlob = audioBufferToWav(renderedBuffer);
+  
+  // Web Audio 추출 성공
+  return new File([wavBlob], `fallback_${file.name}.wav`, { type: 'audio/wav' });
+}
+
 export default function DashboardPage() {
   const { data: session } = useSession();
   const [file, setFile] = useState<File | null>(null);
@@ -50,42 +124,63 @@ export default function DashboardPage() {
       let fileToUpload = file;
       const isLargeFile = file.size > 4.5 * 1024 * 1024;
 
-      // 테스트 모드이면서 파일이 4.5MB 초과인 경우: 브라우저에서 먼저 20초 크롭 실행
+      // 테스트 모드이면서 파일이 4.5MB 초과인 경우 (브라우저 사이드 선처리)
       if (testMode && isLargeFile) {
-        if (!window.FFmpegWASM || !window.FFmpegUtil) {
-          throw new Error("브라우저용 비디오 처리 엔진(WASM)이 아직 로드되지 않았습니다. 잠시 후 다시 시도해주세요.");
-        }
         
-        setErrorMessage('브라우저 내 미디어 엔진(FFmpeg WASM) 로딩 중... 처음 사용 시 수십 초가 소요될 수 있습니다.');
+        if (wasmAvailable !== false) {
+          // 1. 정상 환경 (WASM 활성화): FFmpeg.wasm 활용하여 Video를 Crop
+          try {
+            if (!window.FFmpegWASM || !window.FFmpegUtil) {
+              throw new Error("FFmpeg script not loaded");
+            }
+            
+            setErrorMessage('브라우저 내 미디어 엔진(FFmpeg WASM) 로딩 중... 처음 사용 시 수십 초가 소요될 수 있습니다.');
 
-        const { FFmpeg } = window.FFmpegWASM;
-        const { fetchFile, toBlobURL } = window.FFmpegUtil;
+            const { FFmpeg } = window.FFmpegWASM;
+            const { fetchFile, toBlobURL } = window.FFmpegUtil;
 
-        let ffmpeg = (window as any)._ffmpegInstance;
-        if (!ffmpeg) {
-          ffmpeg = new FFmpeg();
-          // 기업 방화벽/프록시로 CDN이 차단되는 환경을 고려하여 모든 에셋을 Same-Origin으로 로드
-          await ffmpeg.load({
-            coreURL: '/ffmpeg/ffmpeg-core.js',
-            wasmURL: '/ffmpeg/ffmpeg-core.wasm',
-            classWorkerURL: '/ffmpeg/814.ffmpeg.js',
-          });
-          (window as any)._ffmpegInstance = ffmpeg;
+            let ffmpeg = (window as any)._ffmpegInstance;
+            if (!ffmpeg) {
+              ffmpeg = new FFmpeg();
+              await ffmpeg.load({
+                coreURL: '/ffmpeg/ffmpeg-core.js',
+                wasmURL: '/ffmpeg/ffmpeg-core.wasm',
+                classWorkerURL: '/ffmpeg/814.ffmpeg.js',
+              });
+              (window as any)._ffmpegInstance = ffmpeg;
+            }
+
+            setErrorMessage('대용량 파일 우회 처리 중: 로컬 브라우저에서 처음 20초 구간만 비디오로 추출하고 있습니다...');
+
+            const ts = Date.now();
+            const inputName = `input_${ts}.mp4`;
+            const outputName = `output_${ts}.mp4`;
+            await ffmpeg.writeFile(inputName, await fetchFile(file));
+            await ffmpeg.exec(['-i', inputName, '-t', '20', '-c', 'copy', outputName]);
+
+            const wasmData = await ffmpeg.readFile(outputName);
+            fileToUpload = new File([wasmData.buffer], `cropped_${file.name}`, { type: file.type || 'video/mp4' });
+
+            console.log(`[WASM] 프론트엔드 비디오 크롭 우회 성공: 원본 ${(file.size/1024/1024).toFixed(1)}MB -> 크롭 ${(fileToUpload.size/1024/1024).toFixed(1)}MB`);
+            setErrorMessage('비디오 추출 완료. 서버로 안전하게 전송을 시작합니다...');
+          } catch (ffmpegErr) {
+            console.warn("WASM 처리 실패, Fallback 전환:", ffmpegErr);
+            // 에러 발생 시 Fallback으로 전환을 유도하기 위해 wasmAvailable을 임시로 강제 false 화
+            setErrorMessage('WASM 처리에 실패하여 네이티브 오디오 추출(Fallback) 모드로 전환합니다...');
+            await runAudioFallback();
+          }
+        } else {
+          // 2. 기업 보안망 차단 환경 (WASM 불가능): Web Audio API로 Audio만 추출하여 초경량화
+          await runAudioFallback();
         }
 
-        setErrorMessage('대용량 파일 우회 처리 중: 로컬 브라우저에서 처음 20초 구간만 추출하고 있습니다...');
-
-        const ts = Date.now();
-        const inputName = `input_${ts}.mp4`;
-        const outputName = `output_${ts}.mp4`;
-        await ffmpeg.writeFile(inputName, await fetchFile(file));
-        await ffmpeg.exec(['-i', inputName, '-t', '20', '-c', 'copy', outputName]);
-
-        const wasmData = await ffmpeg.readFile(outputName);
-        fileToUpload = new File([wasmData.buffer], `cropped_${file.name}`, { type: file.type || 'video/mp4' });
-
-        console.log(`프론트엔드 크롭 우회 성공: 원본 ${(file.size/1024/1024).toFixed(1)}MB -> 크롭 ${(fileToUpload.size/1024/1024).toFixed(1)}MB`);
-        setErrorMessage('추출 완료. 서버로 안전하게 전송을 시작합니다...');
+        async function runAudioFallback() {
+          setErrorMessage('기업망 환경 감지됨: Vercel 4.5MB 업로드 제한을 우회하기 위해 브라우저에서 오디오 샘플만 추출(초경량 압축) 중입니다...');
+          const fallbackWav = await extractAudioFallback(file, 20);
+          fileToUpload = fallbackWav;
+          console.log(`[Fallback] 네이티브 오디오 추출 성공: 원본 ${(file.size/1024/1024).toFixed(1)}MB -> 다운샘플링 WAV ${(fallbackWav.size/1024/1024).toFixed(1)}MB`);
+          setErrorMessage('오디오 단독 추출 완료 (비디오 병합 제외). 서버로 안전하게 전송합니다...');
+        }
       }
 
       const formData = new FormData();
@@ -178,10 +273,11 @@ export default function DashboardPage() {
                 대용량 비디오/오디오의 앞부분 20초만 잘라서 빠르게 파이프라인(STT/번역/TTS)을 검증합니다.
               </p>
               {wasmAvailable === false && (
-                <div style={{ margin: '10px 0 0 24px', padding: '10px 12px', backgroundColor: '#fff3cd', color: '#856404', borderRadius: '4px', fontSize: '0.85rem', border: '1px solid #ffeeba', lineHeight: '1.4' }}>
-                  ⚠️ <b>시스템(브라우저) 경고:</b> 현재 환경(기업 관리형 브라우저 등)의 보안 정책으로 WebAssembly 연산 엔진이 <b>강제 차단</b>되어 있습니다.<br/>
-                  이 경우 4.5MB 초과 대용량 파일은 브라우저 컷팅 처리 불가로 업로드가 실패하게 됩니다.<br/>
-                  <b>4.5MB 이하 소용량 테스트 컷을 사용하시거나, 제약이 없는 개인 PC/브라우저로 접속해주세요.</b>
+                <div style={{ margin: '10px 0 0 24px', padding: '10px 12px', backgroundColor: '#eef6ff', color: '#0056b3', borderRadius: '4px', fontSize: '0.85rem', border: '1px solid #cce5ff', lineHeight: '1.4' }}>
+                  💡 <b>시스템 감지:</b> 현재 환경(기업 관리형 브라우저 등)에서는 WASM 연산 엔진이 차단되어 있습니다.<br/>
+                  이를 우회하기 위해 Vercel의 4.5MB 업로드 한계(HTTP Payload Limit)를 넘지 않도록, <b>브라우저의 기본 네이티브 Audio API</b>를 
+                  사용하여 오디오 트랙만 초경량(16kHz)으로 안전하게 분할/다운샘플링하여 서버에 전송합니다.<br/>
+                  <i>(이 경우 최종 결과물은 합성된 '영상'이 아닌 '더빙 음성(Audio)' 형태로 안전하게 제공됩니다.)</i>
                 </div>
               )}
             </div>
