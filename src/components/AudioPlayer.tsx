@@ -64,6 +64,8 @@ export default function AudioPlayer({
   const dubVideoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordProgress, setRecordProgress] = useState(0);
 
   // 동기화 재생: 원본 영상(음소거) + 더빙 오디오를 같이 재생
   // 원본 영상의 원래 음성이 더빙 오디오와 섞이지 않도록 동기화 중에는 음소거 처리
@@ -91,6 +93,101 @@ export default function AudioPlayer({
       audio.play();
       setIsSyncing(true);
     }
+  };
+
+  // 더빙 영상 다운로드: Canvas + AudioContext + MediaRecorder로
+  // 원본 영상(무음 프레임)과 더빙 오디오를 실시간 합성 녹화 후 webm 저장
+  const handleDownloadDubbedVideo = async () => {
+    const video = dubVideoRef.current;  // 원본 영상(muted)
+    const audio = audioRef.current;      // 더빙 오디오
+    if (!video || !audio || isRecording) return;
+
+    setIsRecording(true);
+    setRecordProgress(0);
+
+    // Canvas에 video 프레임을 실시간으로 그려 VideoStream 생성
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth || 1280;
+    canvas.height = video.videoHeight || 720;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      setIsRecording(false);
+      return;
+    }
+    
+    // captureStream: 브라우저 호환성을 위해 any 캐스팅 (일부 브라우저에서 stream/mozCaptureStream 지원)
+    const v = canvas as any;
+    const videoStream = (v.captureStream || v.mozCaptureStream).call(v, 30); // 30fps
+
+    // AudioContext에서 더빙 오디오 소스를 추출해 MediaStream으로 변환
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const audioSrc = audioCtx.createMediaElementSource(audio);
+    const dest = audioCtx.createMediaStreamDestination();
+    audioSrc.connect(dest);
+    audioSrc.connect(audioCtx.destination); // 캡처하는 동안 재생음도 들리게 유지
+
+    // 비디오 + 오디오 트랙 합성
+    const combinedStream = new MediaStream([
+      ...videoStream.getVideoTracks(),
+      ...dest.stream.getAudioTracks(),
+    ]);
+
+    let options = { mimeType: "video/webm" };
+    if (MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")) {
+      options.mimeType = "video/webm;codecs=vp9,opus";
+    }
+
+    const recorder = new MediaRecorder(combinedStream, options);
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+
+    // 녹화 완료 시 파일 저장
+    recorder.onstop = () => {
+      audioCtx.close();
+      const blob = new Blob(chunks, { type: "video/webm" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      // 확장자 제거 후 webm 붙임
+      const finalName = fileName ? fileName.replace(/\.[^/.]+$/, "") : "dubbed_video";
+      a.download = `${finalName}_dubbed.webm`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setIsRecording(false);
+      setRecordProgress(0);
+    };
+
+    // Canvas 프레임 루프
+    let animId: number;
+    const drawLoop = () => {
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      animId = requestAnimationFrame(drawLoop);
+    };
+
+    // 영상 + 오디오 동기화 후 녹화 시작
+    recorder.start(100);
+    video.currentTime = 0;
+    audio.currentTime = 0;
+    await Promise.all([video.play(), audio.play()]);
+    drawLoop();
+
+    // 오디오 종료 시 녹화 종료
+    const duration = audio.duration || 60;
+    audio.onended = () => {
+      cancelAnimationFrame(animId);
+      recorder.stop();
+      video.pause();
+    };
+
+    // 진행률 업데이트 (UI 표시용)
+    const progressInterval = setInterval(() => {
+      if (!audio.paused && duration > 0) {
+        setRecordProgress(Math.round((audio.currentTime / duration) * 100));
+      }
+      if (audio.ended) clearInterval(progressInterval);
+    }, 500);
   };
 
   const s: Record<string, React.CSSProperties> = {
@@ -148,10 +245,13 @@ export default function AudioPlayer({
               <audio ref={audioRef} src={audioUrl} />
             </div>
           </div>
-          {/* 동기화 재생 버튼 */}
+          {/* 동기화 재생 및 다운로드 버튼 */}
           <div style={{ ...s.row, marginTop: "14px" }}>
-            <button style={{ ...s.btn, ...s.btnPrimary }} onClick={handleSyncPlay}>
+            <button style={{ ...s.btn, ...s.btnPrimary }} onClick={handleSyncPlay} disabled={isRecording}>
               {isSyncing ? "⏸ 동기화 정지" : "▶ 동기화 재생 (원본+더빙)"}
+            </button>
+            <button style={{ ...s.btn, ...s.btnGreen }} onClick={handleDownloadDubbedVideo} disabled={isRecording}>
+              {isRecording ? `녹화 중... ${recordProgress}%` : "📸 더빙 영상 다운로드 (.webm)"}
             </button>
           </div>
         </div>
